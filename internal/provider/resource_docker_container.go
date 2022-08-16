@@ -9,8 +9,8 @@ import (
 
 func resourceDockerContainer() *schema.Resource {
 	return &schema.Resource{
-		CreateContext: resourceDockerContainerCreate,
-		ReadContext:   resourceDockerContainerRead,
+		Create:        resourceDockerContainerCreate,
+		Read:          resourceDockerContainerRead,
 		UpdateContext: resourceDockerContainerUpdate,
 		DeleteContext: resourceDockerContainerDelete,
 		MigrateState:  resourceDockerContainerMigrateState,

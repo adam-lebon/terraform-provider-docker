@@ -30,14 +30,15 @@ import (
 
 var creationTime time.Time
 
-func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+func resourceDockerContainerCreate(d *schema.ResourceData, meta interface{}) error {
+	ctx := context.Background()
 	var err error
 	client := meta.(*ProviderConfig).DockerClient
 	authConfigs := meta.(*ProviderConfig).AuthConfigs
 	image := d.Get("image").(string)
 	_, err = findImage(ctx, image, client, authConfigs)
 	if err != nil {
-		return diag.Errorf("Unable to create container with image %s: %s", image, err)
+		return err // diag.Errorf("Unable to create container with image %s: %s", image, err)
 	}
 
 	config := &container.Config{
@@ -56,7 +57,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 		config.Cmd = stringListToStringSlice(v.([]interface{}))
 		for _, v := range config.Cmd {
 			if v == "" {
-				return diag.Errorf("values for command may not be empty")
+				return fmt.Errorf("values for command may not be empty")
 			}
 		}
 	}
@@ -97,7 +98,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 	if v, ok := d.GetOk("volumes"); ok {
 		volumes, binds, volumesFrom, err = volumeSetToDockerVolumes(v.(*schema.Set))
 		if err != nil {
-			return diag.Errorf("Unable to parse volumes: %s", err)
+			return fmt.Errorf("Unable to parse volumes: %s", err)
 		}
 	}
 	if len(volumes) != 0 {
@@ -333,7 +334,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 
 	// TODO mavogel add platform later which comes from API v1.41. Currently we pass nil
 	if retContainer, err = client.ContainerCreate(ctx, config, hostConfig, networkingConfig, nil, d.Get("name").(string)); err != nil {
-		return diag.Errorf("Unable to create container: %s", err)
+		return fmt.Errorf("Unable to create container: %s", err)
 	}
 
 	d.SetId(retContainer.ID)
@@ -342,7 +343,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 	if v, ok := d.GetOk("networks"); ok {
 		if err := client.NetworkDisconnect(ctx, "bridge", retContainer.ID, false); err != nil {
 			if !strings.Contains(err.Error(), "is not connected to the network bridge") {
-				return diag.Errorf("Unable to disconnect the default network: %s", err)
+				return fmt.Errorf("Unable to disconnect the default network: %s", err)
 			}
 		}
 		endpointConfig := &network.EndpointSettings{}
@@ -353,7 +354,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 		for _, rawNetwork := range v.(*schema.Set).List() {
 			networkID := rawNetwork.(string)
 			if err := client.NetworkConnect(ctx, networkID, retContainer.ID, endpointConfig); err != nil {
-				return diag.Errorf("Unable to connect to network '%s': %s", networkID, err)
+				return fmt.Errorf("Unable to connect to network '%s': %s", networkID, err)
 			}
 		}
 	}
@@ -362,7 +363,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 	if v, ok := d.GetOk("networks_advanced"); ok {
 		if err := client.NetworkDisconnect(ctx, "bridge", retContainer.ID, false); err != nil {
 			if !strings.Contains(err.Error(), "is not connected to the network bridge") {
-				return diag.Errorf("Unable to disconnect the default network: %s", err)
+				return fmt.Errorf("Unable to disconnect the default network: %s", err)
 			}
 		}
 
@@ -383,7 +384,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 			endpointConfig.IPAMConfig = endpointIPAMConfig
 
 			if err := client.NetworkConnect(ctx, networkID, retContainer.ID, endpointConfig); err != nil {
-				return diag.Errorf("Unable to connect to network '%s': %s", networkID, err)
+				return fmt.Errorf("Unable to connect to network '%s': %s", networkID, err)
 			}
 		}
 	}
@@ -405,10 +406,10 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 			}
 
 			if setParams == 0 {
-				return diag.Errorf("error with upload content: one of 'content', 'content_base64', or 'source' must be set")
+				return fmt.Errorf("error with upload content: one of 'content', 'content_base64', or 'source' must be set")
 			}
 			if setParams > 1 {
-				return diag.Errorf("error with upload content: only one of 'content', 'content_base64', or 'source' can be set")
+				return fmt.Errorf("error with upload content: only one of 'content', 'content_base64', or 'source' can be set")
 			}
 
 			var contentToUpload string
@@ -422,7 +423,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 			if source != "" {
 				sourceContent, err := ioutil.ReadFile(source)
 				if err != nil {
-					return diag.Errorf("could not read file: %s", err)
+					return fmt.Errorf("could not read file: %s", err)
 				}
 				contentToUpload = string(sourceContent)
 			}
@@ -442,20 +443,20 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 				Size: int64(len(contentToUpload)),
 			}
 			if err := tw.WriteHeader(hdr); err != nil {
-				return diag.Errorf("Error creating tar archive: %s", err)
+				return fmt.Errorf("Error creating tar archive: %s", err)
 			}
 			if _, err := tw.Write([]byte(contentToUpload)); err != nil {
-				return diag.Errorf("Error creating tar archive: %s", err)
+				return fmt.Errorf("Error creating tar archive: %s", err)
 			}
 			if err := tw.Close(); err != nil {
-				return diag.Errorf("Error creating tar archive: %s", err)
+				return fmt.Errorf("Error creating tar archive: %s", err)
 			}
 
 			dstPath := "/"
 			uploadContent := bytes.NewReader(buf.Bytes())
 			options := types.CopyToContainerOptions{}
 			if err := client.CopyToContainer(ctx, retContainer.ID, dstPath, uploadContent, options); err != nil {
-				return diag.Errorf("Unable to upload volume content: %s", err)
+				return fmt.Errorf("Unable to upload volume content: %s", err)
 			}
 		}
 	}
@@ -464,7 +465,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 		creationTime = time.Now()
 		options := types.ContainerStartOptions{}
 		if err := client.ContainerStart(ctx, retContainer.ID, options); err != nil {
-			return diag.Errorf("Unable to start container: %s", err)
+			return fmt.Errorf("Unable to start container: %s", err)
 		}
 	}
 
@@ -502,7 +503,7 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 		select {
 		case err := <-errAttachCh:
 			if err != nil {
-				return diag.Errorf("Unable to wait container end of execution: %s", err)
+				return fmt.Errorf("Unable to wait container end of execution: %s", err)
 			}
 		case <-attachCh:
 			if d.Get("logs").(bool) {
@@ -511,15 +512,16 @@ func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, 
 		}
 	}
 
-	return resourceDockerContainerRead(ctx, d, meta)
+	return resourceDockerContainerRead(d, meta)
 }
 
-func resourceDockerContainerRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+func resourceDockerContainerRead(d *schema.ResourceData, meta interface{}) error {
+	ctx := context.Background()
 	client := meta.(*ProviderConfig).DockerClient
 
 	apiContainer, err := fetchDockerContainer(ctx, d.Id(), client)
 	if err != nil {
-		return diag.FromErr(err)
+		return err // diag.FromErr(err)
 	}
 	if apiContainer == nil {
 		// This container doesn't exist anymore
@@ -539,7 +541,7 @@ func resourceDockerContainerRead(ctx context.Context, d *schema.ResourceData, me
 	for i := loops; i > 0; i-- {
 		container, err = client.ContainerInspect(ctx, apiContainer.ID)
 		if err != nil {
-			return diag.Errorf("Error inspecting container %s: %s", apiContainer.ID, err)
+			return fmt.Errorf("Error inspecting container %s: %s", apiContainer.ID, err)
 		}
 
 		jsonObj, _ := json.MarshalIndent(container, "", "\t")
@@ -551,12 +553,12 @@ func resourceDockerContainerRead(ctx context.Context, d *schema.ResourceData, me
 		}
 
 		if creationTime.IsZero() { // We didn't just create it, so don't wait around
-			return resourceDockerContainerDelete(ctx, d, meta)
+			// return resourceDockerContainerDelete(ctx, d, meta)
 		}
 
 		finishTime, err := time.Parse(time.RFC3339, container.State.FinishedAt)
 		if err != nil {
-			return diag.Errorf("Container finish time could not be parsed: %s", container.State.FinishedAt)
+			return fmt.Errorf("Container finish time could not be parsed: %s", container.State.FinishedAt)
 		}
 		if finishTime.After(creationTime) {
 			// It exited immediately, so error out so dependent containers
@@ -564,7 +566,7 @@ func resourceDockerContainerRead(ctx context.Context, d *schema.ResourceData, me
 			if err := resourceDockerContainerDelete(ctx, d, meta); err != nil {
 				log.Printf("[ERROR] Container %s failed to be deleted: %v", apiContainer.ID, err)
 			}
-			return diag.Errorf("Container %s exited after creation, error was: %s", apiContainer.ID, container.State.Error)
+			return fmt.Errorf("Container %s exited after creation, error was: %s", apiContainer.ID, container.State.Error)
 		}
 
 		time.Sleep(sleepTime)
@@ -575,7 +577,7 @@ func resourceDockerContainerRead(ctx context.Context, d *schema.ResourceData, me
 		if err := resourceDockerContainerDelete(ctx, d, meta); err != nil {
 			log.Printf("[ERROR] Container %s failed to be deleted: %v", apiContainer.ID, err)
 		}
-		return diag.Errorf("Container %s failed to be in running state", apiContainer.ID)
+		return fmt.Errorf("Container %s failed to be in running state", apiContainer.ID)
 	}
 
 	if !container.State.Running {
